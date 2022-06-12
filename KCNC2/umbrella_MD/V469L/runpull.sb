@@ -1,0 +1,98 @@
+#!/bin/tcsh
+#SBATCH --account=csb_gpu_acc
+#SBATCH --partition=pascal
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --gres=gpu:1
+#SBATCH --mem=24G
+#SBATCH --time=3-00:00:00
+#SBATCH --job-name=kcnc2_v469l_pull
+#SBATCH --output=runpull.log
+
+module restore amber17
+
+# Number of Amino Acids and number of Amino Acids + Lipids for this system (the two tails and the head group count extra)
+set numAA = 1096
+set numAALip = 2636
+@ lipidStart = $numAA + 1
+@ wationStart = $numAALip + 1
+set S6N_A_First = 238
+set S6N_A_Last  = 244
+set S6N_B_First = 512
+set S6N_B_Last  = 518
+set S6N_C_First = 786
+set S6N_C_Last  = 792
+set S6N_D_First = 1060
+set S6N_D_Last  = 1066
+
+# Set name of prmtop file
+set prmtop = "kcnc2.prmtop"
+set refcrd = prod.0025.crd
+
+# Set start crd file
+set inpcrd = prod.0025.crd
+
+# Set restraint file
+set RST = "pull.rsts"
+
+########################################################################
+##### 10ns K+ Pulling MD with Backbone Positional Restraints on S6 #####
+########################################################################
+
+cat << EOF > pull.in
+ Pulling over 10ns with restraints
+ &cntrl
+  imin=0,
+  ntx=5,   ! Read coordinates and velocities
+  irest=1, ! Restart trajectory
+  ntc=2,
+  ntf=2,
+  ntr=1,
+  tol=0.0000001,
+  nstlim=5000000,
+  ntt=3,
+  gamma_ln=1.0,
+  temp0=310.0,
+  ntpr=2500,
+  ntwr=2500,
+  ntwx=2500,
+  dt=0.002,
+  ig=-1, 
+  ntb=2,
+  ntp=2,
+  cut=10.0,
+  ioutfm=1,
+  ntxo=2,
+  nmropt=1,         ! Read the weight change information below
+  pencut=-0.001,    ! Print all restraints by setting cutoff to small number
+  restraint_wt=7.0, ! Cartesian restraint force
+  restraintmask=":$S6N_A_First-$S6N_A_Last,$S6N_B_First-$S6N_B_Last,$S6N_C_First-$S6N_C_Last,$S6N_D_First-$S6N_D_Last@C,CA,O,N", ! Cartesian restraint mask
+ /
+ &wt
+  type="REST",    ! Vary the restraint weight
+  istep1=1,       ! First step
+  istep2=40000,   ! Final step
+  value1=0.0,     ! Weight at first step
+  value2=1.0,     ! Weight at final step
+ /
+ &wt
+  type="REST",    ! Vary the restraint weight
+  istep1=40001,   ! First step
+  istep2=5000000, ! Final step
+  value1=1.0,     ! Weight at first step
+  value2=1.0,     ! Weight at final step
+ /
+ &wt type='DUMPFREQ',
+  istep1=500,
+ /
+ &wt
+  type="END"
+ /
+DISANG=$RST
+DUMPAVE=pull_rsts.out
+LISTOUT=POUT
+LISTIN=POUT
+EOF
+
+pmemd.cuda -O -i pull.in -o pull.out -p $prmtop -c $inpcrd -r pull.crd -ref $refcrd -x pull.nc
